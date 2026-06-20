@@ -221,3 +221,12 @@ async function handleLeveling(message, client) {
     logger.error('Error handling leveling for message:', error);
   }
 }
+
+import { handleAITickets } from "../services/aiTickets.js";
+
+export default {
+  name: "messageCreate",
+  execute(message) {
+    handleAITickets(message);
+  },
+};
