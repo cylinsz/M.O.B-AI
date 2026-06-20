@@ -1,81 +1,67 @@
 import { EmbedBuilder } from "discord.js";
-import botConfig from "../../bot.js";
+import { PRIORITY_MAP } from "../utils/helpers.js";
 
-const reports = new Map();
+function calculateTrust(ticketData) {
+  let trust = 50;
 
-const badKeywords = [
-  "exposing",
-  "scam",
-  "threat",
-  "fake",
-  "cheating",
-  "boosting",
-];
+  const text = (ticketData.reason || "").toLowerCase();
 
-export function handleAITickets(message) {
-  if (!message.guild || message.author.bot) return;
+  // lowers trust
+  if (text.includes("fake")) trust -= 20;
+  if (text.includes("lying")) trust -= 15;
+  if (text.includes("scam")) trust -= 25;
 
-  const content = message.content.toLowerCase();
-  const prefix = botConfig.commands.prefix;
+  // increases trust
+  if (text.includes("proof")) trust += 25;
+  if (text.includes("clip")) trust += 20;
+  if (text.includes("screenshot")) trust += 20;
+  if (text.includes("evidence")) trust += 25;
 
-  // ================= REPORT =================
-  if (content.startsWith(prefix + "report")) {
-    const text = message.content.slice(prefix.length + 6).trim();
+  // clamp
+  if (trust > 100) trust = 100;
+  if (trust < 0) trust = 0;
 
-    const report = {
-      user: message.author.tag,
-      content: text,
-      time: Date.now(),
-      confidence: text.includes("proof") ? "MEDIUM" : "LOW",
-    };
+  return trust;
+}
 
-    reports.set(Date.now(), report);
+function getVerdict(trust) {
+  if (trust >= 75) return "🟢 High Credibility";
+  if (trust >= 40) return "🟡 Medium Credibility";
+  return "🔴 Low Credibility";
+}
 
-    return message.reply(
-      `📩 Report received.\nAI Confidence: **${report.confidence}**`
-    );
-  }
+/**
+ * CALL THIS when a ticket is created
+ */
+export async function sendTicketOverview(client, ticketData, guildId, channelId) {
+  const guild = await client.guilds.fetch(guildId).catch(() => null);
+  if (!guild) return;
 
-  // ================= STAFF REPORT VIEW =================
-  if (content === prefix + "reports") {
-    return message.reply(
-      [...reports.values()]
-        .slice(-10)
-        .map((r, i) => `#${i + 1} ${r.user} | ${r.confidence}`)
-        .join("\n") || "No reports"
-    );
-  }
+  const overviewChannel = guild.channels.cache.find(
+    (c) => c.name === "ticket-overview"
+  );
 
-  // ================= AI CHECK =================
-  if (content.startsWith(prefix + "check")) {
-    let verdict = "Needs review";
+  if (!overviewChannel) return;
 
-    if (content.includes("fake")) verdict = "⚠️ Likely false";
-    if (content.includes("proof")) verdict = "✅ Evidence detected";
+  const trust = calculateTrust(ticketData);
+  const verdict = getVerdict(trust);
 
-    return message.reply(`🧠 AI Verdict: **${verdict}**`);
-  }
+  const priority = PRIORITY_MAP[ticketData.priority || "none"];
 
-  // ================= AUTO FLAG =================
-  if (badKeywords.some((w) => content.includes(w))) {
-    const log = message.guild.channels.cache.get(
-      botConfig.tickets.logChannel
-    );
+  const embed = new EmbedBuilder()
+    .setTitle("📢 New Ticket Overview")
+    .setColor(priority?.color || 0x3498db)
+    .addFields(
+      { name: "User ID", value: ticketData.userId, inline: true },
+      { name: "Priority", value: `${priority.emoji} ${priority.label}`, inline: true },
+      { name: "Trust Score", value: `${trust}/100`, inline: true },
+      { name: "Verdict", value: verdict, inline: false },
+      { name: "Reason", value: ticketData.reason?.slice(0, 1000) || "None" }
+    )
+    .setFooter({ text: `Ticket ID: ${channelId}` });
 
-    if (log) {
-      const embed = new EmbedBuilder()
-        .setTitle("🚨 Flagged Message")
-        .setColor(0xff0000)
-        .addFields(
-          { name: "User", value: message.author.tag },
-          { name: "Message", value: message.content.slice(0, 1000) }
-        );
-
-      log.send({ embeds: [embed] });
-    }
-  }
-
-  if (content === prefix + "status") {
-    return message.reply("🧠 M.O.B AI is active.");
-  }
+  await overviewChannel.send({
+    content: `<@&YOUR_MOD_ROLE_ID> 🚨 New ticket requires attention`,
+    embeds: [embed],
+  });
 }
